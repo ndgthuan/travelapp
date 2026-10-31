@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_map/flutter_map.dart' as flutter_map;
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart' as latlong;
 import 'package:provider/provider.dart';
 import 'package:animate_gradient/animate_gradient.dart';
@@ -20,9 +19,10 @@ import '../services/map_service.dart';
 
 /// Interactive map interface for visualizing trip itineraries and real-time navigation.
 ///
-/// Supports both Google Maps (mobile) and Flutter Map (web fallback). It allows
+/// Uses OpenStreetMap tiles through flutter_map on every platform. It allows
 /// users to select a trip, view activity locations, see route segments between
-/// activities, and perform check-ins directly from the map.
+/// activities, perform check-ins directly from the map, and jump to the
+/// device's current location.
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
 
@@ -31,15 +31,15 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  GoogleMapController? _googleMapController;
   late flutter_map.MapController _flutterMapController;
-  final Set<Marker> _googleMarkers = {};
-  final Set<Polyline> _googlePolylines = {};
   final List<flutter_map.Marker> _flutterMarkers = [];
   final List<flutter_map.Polyline> _flutterPolylines = [];
   int _currentActivityIndex = 0;
   bool _isLoading = false;
   bool _isMapReady = false;
+
+  // Device position, shown as a blue dot after the location button is tapped
+  latlong.LatLng? _user_location;
 
   // Auto refresh timer
   Timer? _autoRefreshTimer;
@@ -50,6 +50,7 @@ class _MapScreenState extends State<MapScreen> {
   bool _centerPressed = false;
   bool _checkInPressed = false;
   bool _refreshPressed = false;
+  bool _my_location_pressed = false;
 
   final MapService _mapService = MapService();
 
@@ -369,8 +370,6 @@ class _MapScreenState extends State<MapScreen> {
       _selectedTrip = trip;
       _selectedSharedTrip =
           null; // Clear shared trip when selecting regular trip
-      _googleMarkers.clear();
-      _googlePolylines.clear();
       _flutterMarkers.clear();
       _flutterPolylines.clear();
       _isLoading = true;
@@ -421,63 +420,30 @@ class _MapScreenState extends State<MapScreen> {
     _currentActivityIndex = firstUncheckedIndex;
 
     // Clear existing markers and polylines first
-    _googleMarkers.clear();
-    _googlePolylines.clear();
     _flutterMarkers.clear();
     _flutterPolylines.clear();
 
     // Add markers for activities
-    if (!kIsWeb) {
-      // Google Maps markers
-      for (int i = 0; i < activities.length; i++) {
-        final activity = activities[i];
-        final marker = Marker(
-          markerId: MarkerId(activity.id ?? 'activity_$i'),
-          position: LatLng(
-            activity.location!.latitude!,
-            activity.location!.longitude!,
-          ),
-          infoWindow: InfoWindow(
-            title: activity.title,
-            snippet: activity.description ?? '',
-          ),
-          icon: i == _currentActivityIndex
-              ? BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueBlue,
-                ) // Starting point - blue
+    for (int i = 0; i < activities.length; i++) {
+      final activity = activities[i];
+      final marker = flutter_map.Marker(
+        point: latlong.LatLng(
+          activity.location!.latitude!,
+          activity.location!.longitude!,
+        ),
+        child: Icon(
+          Icons.location_on,
+          color: i == _currentActivityIndex
+              ? Colors
+                    .blue // Starting point - blue
               : i == _currentActivityIndex + 1
-              ? BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueRed,
-                ) // Next destination - red
-              : BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueYellow,
-                ), // Others - yellow
-        );
-        _googleMarkers.add(marker);
-      }
-    } else {
-      // Flutter Map markers
-      for (int i = 0; i < activities.length; i++) {
-        final activity = activities[i];
-        final marker = flutter_map.Marker(
-          point: latlong.LatLng(
-            activity.location!.latitude!,
-            activity.location!.longitude!,
-          ),
-          child: Icon(
-            Icons.location_on,
-            color: i == _currentActivityIndex
-                ? Colors
-                      .blue // Starting point - blue
-                : i == _currentActivityIndex + 1
-                ? Colors
-                      .red // Next destination - red
-                : Colors.yellow, // Others - yellow
-            size: 40,
-          ),
-        );
-        _flutterMarkers.add(marker);
-      }
+              ? Colors
+                    .red // Next destination - red
+              : Colors.yellow, // Others - yellow
+          size: 40,
+        ),
+      );
+      _flutterMarkers.add(marker);
     }
 
     // Get route for current segment - only if next activity is not checked in
@@ -489,27 +455,15 @@ class _MapScreenState extends State<MapScreen> {
       );
     }
 
-    // Center map on first activity
-    if (activities.isNotEmpty) {
-      if (!kIsWeb) {
-        _googleMapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(
-              activities[0].location!.latitude!,
-              activities[0].location!.longitude!,
-            ),
-            12,
-          ),
-        );
-      } else {
-        _flutterMapController.move(
-          latlong.LatLng(
-            activities[0].location!.latitude!,
-            activities[0].location!.longitude!,
-          ),
-          12,
-        );
-      }
+    // Center map on first activity once the map has been created
+    if (activities.isNotEmpty && _isMapReady) {
+      _flutterMapController.move(
+        latlong.LatLng(
+          activities[0].location!.latitude!,
+          activities[0].location!.longitude!,
+        ),
+        12,
+      );
     }
 
     // Don't call setState here - let the parent method handle the state update
@@ -524,32 +478,14 @@ class _MapScreenState extends State<MapScreen> {
     }
 
     final route = await _mapService.getDirections(
-      LatLng(from.location!.latitude!, from.location!.longitude!),
-      LatLng(to.location!.latitude!, to.location!.longitude!),
+      latlong.LatLng(from.location!.latitude!, from.location!.longitude!),
+      latlong.LatLng(to.location!.latitude!, to.location!.longitude!),
     );
 
     if (route != null) {
-      if (!kIsWeb) {
-        _googlePolylines.add(
-          Polyline(
-            polylineId: const PolylineId('route'),
-            points: route,
-            color: Colors.blue,
-            width: 5,
-          ),
-        );
-      } else {
-        final flutterPoints = route
-            .map((point) => latlong.LatLng(point.latitude, point.longitude))
-            .toList();
-        _flutterPolylines.add(
-          flutter_map.Polyline(
-            points: flutterPoints,
-            color: Colors.blue,
-            strokeWidth: 5,
-          ),
-        );
-      }
+      _flutterPolylines.add(
+        flutter_map.Polyline(points: route, color: Colors.blue, strokeWidth: 5),
+      );
     }
   }
 
@@ -822,11 +758,7 @@ class _MapScreenState extends State<MapScreen> {
         // Move to next activity
         setState(() {
           _currentActivityIndex++;
-          if (!kIsWeb) {
-            _googlePolylines.clear();
-          } else {
-            _flutterPolylines.clear();
-          }
+          _flutterPolylines.clear();
         });
 
         // Get updated activities from the updated trip
@@ -857,11 +789,7 @@ class _MapScreenState extends State<MapScreen> {
         } else {
           // Trip completed - clear all polylines and update markers
           setState(() {
-            if (!kIsWeb) {
-              _googlePolylines.clear();
-            } else {
-              _flutterPolylines.clear();
-            }
+            _flutterPolylines.clear();
           });
           _updateMarkers(updatedActivities);
 
@@ -909,33 +837,57 @@ class _MapScreenState extends State<MapScreen> {
     final currentStartingActivity = activities[_currentActivityIndex];
 
     // Center map on current starting point with maximum zoom for clarity
-    if (!kIsWeb) {
-      if (_googleMapController != null) {
-        _googleMapController!.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            LatLng(
-              currentStartingActivity.location!.latitude!,
-              currentStartingActivity.location!.longitude!,
-            ),
-            19, // High zoom level (120% more detailed)
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Map not ready')));
+    _flutterMapController.move(
+      latlong.LatLng(
+        currentStartingActivity.location!.latitude!,
+        currentStartingActivity.location!.longitude!,
+      ),
+      19, // High zoom level (120% more detailed)
+    );
+  }
+
+  /// Asks for location access, then centers the map on the device's position.
+  Future<void> _go_to_my_location() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _show_location_message('Turn on location services to find you');
         return;
       }
-    } else {
-      // For web (Flutter Map)
-      _flutterMapController.move(
-        latlong.LatLng(
-          currentStartingActivity.location!.latitude!,
-          currentStartingActivity.location!.longitude!,
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _show_location_message('Allow location access to show where you are');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
         ),
-        19, // High zoom level (120% more detailed)
       );
+      if (!mounted) return;
+
+      final user_location = latlong.LatLng(
+        position.latitude,
+        position.longitude,
+      );
+      setState(() {
+        _user_location = user_location;
+      });
+      _flutterMapController.move(user_location, 15);
+    } catch (e) {
+      _show_location_message('Could not get your location');
     }
+  }
+
+  void _show_location_message(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _formatCurrency(double amount) {
@@ -992,57 +944,27 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _updateMarkers(List<ActivityModel> activities) {
-    if (!kIsWeb) {
-      _googleMarkers.clear();
-      for (int i = 0; i < activities.length; i++) {
-        final activity = activities[i];
-        final marker = Marker(
-          markerId: MarkerId(activity.id ?? 'activity_$i'),
-          position: LatLng(
-            activity.location!.latitude!,
-            activity.location!.longitude!,
-          ),
-          infoWindow: InfoWindow(
-            title: activity.title,
-            snippet: activity.description ?? '',
-          ),
-          icon: i == _currentActivityIndex
-              ? BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueBlue,
-                ) // Starting point - blue
+    _flutterMarkers.clear();
+    for (int i = 0; i < activities.length; i++) {
+      final activity = activities[i];
+      final marker = flutter_map.Marker(
+        point: latlong.LatLng(
+          activity.location!.latitude!,
+          activity.location!.longitude!,
+        ),
+        child: Icon(
+          Icons.location_on,
+          color: i == _currentActivityIndex
+              ? Colors
+                    .blue // Starting point - blue
               : i == _currentActivityIndex + 1
-              ? BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueRed,
-                ) // Next destination - red
-              : BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueYellow,
-                ), // Others - yellow
-        );
-        _googleMarkers.add(marker);
-      }
-    } else {
-      _flutterMarkers.clear();
-      for (int i = 0; i < activities.length; i++) {
-        final activity = activities[i];
-        final marker = flutter_map.Marker(
-          point: latlong.LatLng(
-            activity.location!.latitude!,
-            activity.location!.longitude!,
-          ),
-          child: Icon(
-            Icons.location_on,
-            color: i == _currentActivityIndex
-                ? Colors
-                      .blue // Starting point - blue
-                : i == _currentActivityIndex + 1
-                ? Colors
-                      .red // Next destination - red
-                : Colors.yellow, // Others - yellow
-            size: 40,
-          ),
-        );
-        _flutterMarkers.add(marker);
-      }
+              ? Colors
+                    .red // Next destination - red
+              : Colors.yellow, // Others - yellow
+          size: 40,
+        ),
+      );
+      _flutterMarkers.add(marker);
     }
     setState(() {});
   }
@@ -1175,50 +1097,54 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          if (!kIsWeb)
-            GoogleMap(
-              initialCameraPosition: const CameraPosition(
-                target: LatLng(
-                  10.8231,
-                  106.6297,
-                ), // Default to Ho Chi Minh City
-                zoom: 10,
-              ),
-              markers: _googleMarkers,
-              polylines: _googlePolylines,
-              onMapCreated: (controller) {
-                _googleMapController = controller;
+          flutter_map.FlutterMap(
+            mapController: _flutterMapController,
+            options: flutter_map.MapOptions(
+              initialCenter: latlong.LatLng(
+                10.8231,
+                106.6297,
+              ), // Default to Ho Chi Minh City
+              initialZoom: 10,
+              onMapReady: () {
                 setState(() {
                   _isMapReady = true;
                 });
               },
-              myLocationEnabled: true,
-              myLocationButtonEnabled: true,
-            )
-          else
-            flutter_map.FlutterMap(
-              mapController: _flutterMapController,
-              options: flutter_map.MapOptions(
-                initialCenter: latlong.LatLng(
-                  10.8231,
-                  106.6297,
-                ), // Default to Ho Chi Minh City
-                initialZoom: 10,
-                onMapReady: () {
-                  setState(() {
-                    _isMapReady = true;
-                  });
-                },
-              ),
-              children: [
-                flutter_map.TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.flutter_application_1',
-                ),
-                flutter_map.MarkerLayer(markers: _flutterMarkers),
-                flutter_map.PolylineLayer(polylines: _flutterPolylines),
-              ],
             ),
+            children: [
+              flutter_map.TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.flutter_application_1',
+              ),
+              flutter_map.MarkerLayer(markers: _flutterMarkers),
+              flutter_map.PolylineLayer(polylines: _flutterPolylines),
+              if (_user_location != null)
+                flutter_map.MarkerLayer(
+                  markers: [
+                    flutter_map.Marker(
+                      point: _user_location!,
+                      width: 20,
+                      height: 20,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              flutter_map.RichAttributionWidget(
+                alignment: flutter_map.AttributionAlignment.bottomLeft,
+                attributions: [
+                  flutter_map.TextSourceAttribution(
+                    '© OpenStreetMap contributors',
+                  ),
+                ],
+              ),
+            ],
+          ),
           if (_isLoading)
             Container(
               color: Colors.black.withValues(alpha: 0.5),
@@ -1314,8 +1240,6 @@ class _MapScreenState extends State<MapScreen> {
                             setState(() {
                               _selectedTrip = null;
                               _selectedSharedTrip = null;
-                              _googleMarkers.clear();
-                              _googlePolylines.clear();
                               _flutterMarkers.clear();
                               _flutterPolylines.clear();
                             });
@@ -1470,95 +1394,121 @@ class _MapScreenState extends State<MapScreen> {
             ),
         ],
       ),
-      floatingActionButton: _selectedTrip != null
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Center to first activity button - only show when map is ready
-                if (_isMapReady)
-                  Container(
-                    margin: EdgeInsets.only(
-                      bottom: _canUserCheckIn() ? 16 : 50,
-                    ), // More margin when checkin button is hidden
-                    child: GestureDetector(
-                      onTapDown: (_) => setState(() => _centerPressed = true),
-                      onTapUp: (_) {
-                        Future.delayed(const Duration(milliseconds: 200), () {
-                          if (mounted) setState(() => _centerPressed = false);
-                        });
-                      },
-                      onTapCancel: () => setState(() => _centerPressed = false),
-                      child: AnimatedScale(
-                        scale: _centerPressed ? 1.1 : 1.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: FloatingActionButton.small(
-                          onPressed: _centerToCurrentStartingPoint,
-                          backgroundColor: Colors.white,
-                          tooltip: 'Go to starting point',
-                          child: const Icon(
-                            Icons.my_location,
-                            color: AppColors.navyBlue,
-                          ),
-                        ),
-                      ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // My location button - only show when map is ready
+          if (_isMapReady)
+            Container(
+              margin: EdgeInsets.only(bottom: _selectedTrip != null ? 16 : 80),
+              child: GestureDetector(
+                onTapDown: (_) => setState(() => _my_location_pressed = true),
+                onTapUp: (_) {
+                  Future.delayed(const Duration(milliseconds: 200), () {
+                    if (mounted) setState(() => _my_location_pressed = false);
+                  });
+                },
+                onTapCancel: () =>
+                    setState(() => _my_location_pressed = false),
+                child: AnimatedScale(
+                  scale: _my_location_pressed ? 1.1 : 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: FloatingActionButton.small(
+                    onPressed: _go_to_my_location,
+                    backgroundColor: Colors.white,
+                    tooltip: 'My location',
+                    heroTag: 'my_location',
+                    child: const Icon(
+                      Icons.gps_fixed,
+                      color: AppColors.navyBlue,
                     ),
                   ),
-                // Check-in button - only show for owners in collab mode
-                if (_canUserCheckIn())
-                  Container(
-                    margin: const EdgeInsets.only(
-                      bottom: 50,
-                    ), // Add margin to avoid navigation bar
-                    child: GestureDetector(
-                      onTapDown: (_) => setState(() => _checkInPressed = true),
-                      onTapUp: (_) {
-                        Future.delayed(const Duration(milliseconds: 200), () {
-                          if (mounted) setState(() => _checkInPressed = false);
-                        });
-                      },
-                      onTapCancel: () =>
-                          setState(() => _checkInPressed = false),
-                      child: AnimatedScale(
-                        scale: _checkInPressed ? 1.1 : 1.0,
-                        duration: const Duration(milliseconds: 200),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: AnimateGradient(
-                            duration: const Duration(seconds: 5),
-                            primaryColors: [
-                              AppColors.dodgerBlue.withValues(alpha: 0.9),
-                              AppColors.steelBlue.withValues(alpha: 0.8),
-                              AppColors.skyBlue.withValues(alpha: 0.7),
-                            ],
-                            secondaryColors: [
-                              AppColors.skyBlue.withValues(alpha: 0.7),
-                              AppColors.dodgerBlue.withValues(alpha: 0.9),
-                              AppColors.steelBlue.withValues(alpha: 0.8),
-                            ],
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: _checkIn,
-                                child: Container(
-                                  width: 56,
-                                  height: 56,
-                                  alignment: Alignment.center,
-                                  child: const Icon(
-                                    Icons.check_circle,
-                                    color: Colors.white,
-                                    size: 28,
-                                  ),
-                                ),
-                              ),
+                ),
+              ),
+            ),
+          // Center to first activity button - only show with a selected trip
+          if (_selectedTrip != null && _isMapReady)
+            Container(
+              margin: EdgeInsets.only(
+                bottom: _canUserCheckIn() ? 16 : 50,
+              ), // More margin when checkin button is hidden
+              child: GestureDetector(
+                onTapDown: (_) => setState(() => _centerPressed = true),
+                onTapUp: (_) {
+                  Future.delayed(const Duration(milliseconds: 200), () {
+                    if (mounted) setState(() => _centerPressed = false);
+                  });
+                },
+                onTapCancel: () => setState(() => _centerPressed = false),
+                child: AnimatedScale(
+                  scale: _centerPressed ? 1.1 : 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: FloatingActionButton.small(
+                    onPressed: _centerToCurrentStartingPoint,
+                    backgroundColor: Colors.white,
+                    tooltip: 'Go to starting point',
+                    child: const Icon(
+                      Icons.my_location,
+                      color: AppColors.navyBlue,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // Check-in button - only show for owners in collab mode
+          if (_selectedTrip != null && _canUserCheckIn())
+            Container(
+              margin: const EdgeInsets.only(
+                bottom: 50,
+              ), // Add margin to avoid navigation bar
+              child: GestureDetector(
+                onTapDown: (_) => setState(() => _checkInPressed = true),
+                onTapUp: (_) {
+                  Future.delayed(const Duration(milliseconds: 200), () {
+                    if (mounted) setState(() => _checkInPressed = false);
+                  });
+                },
+                onTapCancel: () => setState(() => _checkInPressed = false),
+                child: AnimatedScale(
+                  scale: _checkInPressed ? 1.1 : 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: AnimateGradient(
+                      duration: const Duration(seconds: 5),
+                      primaryColors: [
+                        AppColors.dodgerBlue.withValues(alpha: 0.9),
+                        AppColors.steelBlue.withValues(alpha: 0.8),
+                        AppColors.skyBlue.withValues(alpha: 0.7),
+                      ],
+                      secondaryColors: [
+                        AppColors.skyBlue.withValues(alpha: 0.7),
+                        AppColors.dodgerBlue.withValues(alpha: 0.9),
+                        AppColors.steelBlue.withValues(alpha: 0.8),
+                      ],
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: _checkIn,
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            alignment: Alignment.center,
+                            child: const Icon(
+                              Icons.check_circle,
+                              color: Colors.white,
+                              size: 28,
                             ),
                           ),
                         ),
                       ),
                     ),
                   ),
-              ],
-            )
-          : null,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
