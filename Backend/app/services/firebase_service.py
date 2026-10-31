@@ -281,7 +281,7 @@ class FirebaseService:
         try:
             if self.db:
                 update_data['updated_at'] = datetime.utcnow()
-                self.db.collection('users').document(user_id).update(update_data)
+                self.db.collection('users').document(user_id).set(update_data, merge=True)
                 return True
             return False
         except Exception as e:

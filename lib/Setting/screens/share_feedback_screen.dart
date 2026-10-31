@@ -267,6 +267,7 @@ class _ShareFeedbackScreenState extends State<ShareFeedbackScreen> {
               ),
               child: TextField(
                 controller: _feedbackController,
+                onChanged: (_) => setState(() {}),
                 maxLines: 6,
                 decoration: InputDecoration(
                   hintText: 'Please share details about your experience...',
@@ -341,7 +342,9 @@ class _ShareFeedbackScreenState extends State<ShareFeedbackScreen> {
 
   Widget _buildSubmitButton() {
     return ElevatedButton(
-      onPressed: _feedbackController.text.isNotEmpty ? _submitFeedback : null,
+      onPressed: _feedbackController.text.trim().isNotEmpty
+          ? _submitFeedback
+          : null,
       style: ElevatedButton.styleFrom(
         backgroundColor: AppColors.primary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),

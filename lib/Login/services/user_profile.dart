@@ -43,15 +43,16 @@ class UserProfile {
 
   // Create UserProfile from Firestore document
   factory UserProfile.fromMap(Map<String, dynamic> map) {
+    // The backend writes snake_case keys (created_at) and may omit the
+    // camelCase ones, so accept both and fall back to now instead of crashing.
+    final now = DateTime.now();
     return UserProfile(
       uid: map['uid'] ?? '',
       email: map['email'] ?? '',
       fullName: map['fullName'] ?? '',
-      dateOfBirth: map['dateOfBirth'] != null 
-          ? (map['dateOfBirth'] as Timestamp).toDate() 
-          : null,
-      createdAt: (map['createdAt'] as Timestamp).toDate(),
-      updatedAt: (map['updatedAt'] as Timestamp).toDate(),
+      dateOfBirth: _toDate(map['dateOfBirth']),
+      createdAt: _toDate(map['createdAt'] ?? map['created_at']) ?? now,
+      updatedAt: _toDate(map['updatedAt'] ?? map['updated_at']) ?? now,
       phone: map['phone'],
       address: map['address'],
       gender: map['gender'],
@@ -63,6 +64,14 @@ class UserProfile {
   factory UserProfile.fromDocument(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return UserProfile.fromMap(data);
+  }
+
+  // Firestore gives a Timestamp; the backend JSON gives ISO strings
+  static DateTime? _toDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    return null;
   }
 
   // Create a copy with updated values
