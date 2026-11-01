@@ -86,12 +86,11 @@ class TripPlanningProvider extends ChangeNotifier {
         );
       }
 
-      // Add to local list and save to Firestore
+      // Show the trip right away; the Firestore write finishes in the background.
       _trips.add(createdTrip);
-      await _firebaseService.saveTrip(createdTrip);
-
       _clearError();
       notifyListeners();
+      _saveInBackground(createdTrip);
       return createdTrip;
     } catch (e) {
       _setError('Failed to create trip: $e');
@@ -149,20 +148,17 @@ class TripPlanningProvider extends ChangeNotifier {
         }
       }
 
-      // Remove from local list and Firestore
+      // Remove from the local list right away; the Firestore delete finishes in the background.
       _trips.removeWhere((trip) => trip.id == tripId);
-      try {
-        await _firebaseService.deleteTrip(tripId);
-      } catch (e) {
-        // Log or handle error if needed
-      }
-
       if (_currentTrip?.id == tripId) {
         _currentTrip = null;
       }
 
       _clearError();
       notifyListeners();
+      _firebaseService.deleteTrip(tripId).catchError((e) {
+        _setError('Failed to delete trip: $e');
+      });
       return true;
     } catch (e) {
       _setError('Failed to delete trip: $e');
@@ -170,6 +166,39 @@ class TripPlanningProvider extends ChangeNotifier {
     } finally {
       _setLoading(false);
     }
+  }
+
+  /// Replace a trip in the list and save it without waiting for Firestore.
+  void updateTrip(TripModel trip) {
+    final index = _trips.indexWhere((t) => t.id == trip.id);
+    if (index >= 0) {
+      _trips[index] = trip;
+    } else {
+      _trips.add(trip);
+    }
+    _clearError();
+    notifyListeners();
+    _saveInBackground(trip);
+  }
+
+  /// Save [trip] to Firestore without blocking the UI.
+  ///
+  /// Firestore resolves a write only after the server acknowledges it, so awaiting it
+  /// leaves the screen spinning while offline. A trip saved under a local id takes the
+  /// Firestore document id once the write completes.
+  void _saveInBackground(TripModel trip) {
+    _firebaseService
+        .saveTrip(trip)
+        .then((saved) {
+          final index = _trips.indexWhere((t) => t.id == trip.id);
+          if (index >= 0 && saved.id != trip.id) {
+            _trips[index] = _trips[index].copyWith(id: saved.id);
+            notifyListeners();
+          }
+        })
+        .catchError((e) {
+          _setError('Failed to save trip: $e');
+        });
   }
 
   /// Set the [trip] as the current active trip in the UI.

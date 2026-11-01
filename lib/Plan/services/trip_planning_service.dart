@@ -464,10 +464,9 @@ class TripPlanningService {
   Future<bool> testConnection() async {
     try {
       final headers = await _headers;
-      final response = await http.get(
-        Uri.parse('$baseUrl/activities/types/list'),
-        headers: headers,
-      );
+      final response = await http
+          .get(Uri.parse('$baseUrl/activities/types/list'), headers: headers)
+          .timeout(const Duration(seconds: 10));
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -495,9 +494,8 @@ class TripPlanningService {
       if (trip.destination.trim().isEmpty) {
         throw Exception('Trip destination cannot be empty');
       }
-      if (trip.startDate.isAfter(trip.endDate) ||
-          trip.startDate.isAtSameMomentAs(trip.endDate)) {
-        throw Exception('End date must be after start date');
+      if (trip.startDate.isAfter(trip.endDate)) {
+        throw Exception('End date cannot be before start date');
       }
 
       final body = <String, dynamic>{

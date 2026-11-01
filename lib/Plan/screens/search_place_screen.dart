@@ -28,6 +28,7 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
   final TextEditingController _categoryController = TextEditingController();
   final TextEditingController _locationController = TextEditingController();
   List<dynamic> _places = [];
+  bool _search_failed = false;
 
   @override
   void initState() {
@@ -65,22 +66,46 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
     } else {
       setState(() {
         _places = [];
+        _search_failed = false;
       });
       return;
     }
 
-    final url = Uri.parse(
-      'https://nominatim.openstreetmap.org/search?q=$query&format=json&addressdetails=1&limit=15',
-    );
+    // Uri.https encodes the query; Nominatim rejects requests without an identifying User-Agent (403).
+    final search_uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': query,
+      'format': 'json',
+      'addressdetails': '1',
+      'limit': '15',
+    });
     try {
-      final response = await http.get(url);
+      final response = await http
+          .get(
+            search_uri,
+            headers: {
+              'User-Agent': 'TravelApp/1.0 (com.example.flutter_application_1)',
+              'Accept-Language': 'vi,en',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return;
       if (response.statusCode == 200) {
         setState(() {
           _places = json.decode(response.body);
+          _search_failed = false;
+        });
+      } else {
+        setState(() {
+          _places = [];
+          _search_failed = true;
         });
       }
     } catch (e) {
-      // Ignored for now - ideally show an error snackbar
+      if (!mounted) return;
+      setState(() {
+        _places = [];
+        _search_failed = true;
+      });
     }
   }
 
@@ -178,7 +203,9 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'No places found',
+                          _search_failed
+                              ? 'Could not search places'
+                              : 'No places found',
                           style: TextStyle(
                             fontSize: 18,
                             color: Colors.grey[600],
@@ -186,9 +213,11 @@ class _SearchPlaceScreenState extends State<SearchPlaceScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                          'Try searching for places in your destination',
-                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                        Text(
+                          _search_failed
+                              ? 'Check your connection and try again'
+                              : 'Try searching for places in your destination',
+                          style: const TextStyle(fontSize: 14, color: Colors.grey),
                           textAlign: TextAlign.center,
                         ),
                       ],

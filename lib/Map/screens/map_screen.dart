@@ -905,7 +905,10 @@ class _MapScreenState extends State<MapScreen> {
         )
         .toList();
 
-    if (activities.isEmpty || _currentActivityIndex >= activities.length) {
+    if (activities.isEmpty) {
+      return 'No starting point yet';
+    }
+    if (_currentActivityIndex >= activities.length) {
       return '';
     }
 
@@ -926,6 +929,11 @@ class _MapScreenState extends State<MapScreen> {
               activity.location?.longitude != null,
         )
         .toList();
+
+    // A trip without located activities has no stops yet, so it is not completed
+    if (activities.isEmpty) {
+      return 'No stops with a location yet';
+    }
 
     if (_currentActivityIndex >= activities.length - 1) {
       return 'Trip completed';

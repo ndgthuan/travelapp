@@ -963,7 +963,7 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
     if (_activities.isEmpty) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 300),
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
@@ -2685,7 +2685,7 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
               ),
               ElevatedButton(
                 onPressed: () async {
-                  await _saveEditedTripInfo(
+                  final saved = await _saveEditedTripInfo(
                     nameController.text.trim(),
                     destinationController.text.trim(),
                     descriptionController.text.trim(),
@@ -2693,7 +2693,8 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
                     selectedStartDate,
                     selectedEndDate,
                   );
-                  if (!context.mounted) return;
+                  // Keep the dialog open when validation or saving fails so the user can fix the input.
+                  if (!saved || !context.mounted) return;
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
@@ -2995,7 +2996,8 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
     }
   }
 
-  Future<void> _saveEditedTripInfo(
+  /// Saves the edited trip info. Returns false when validation or saving fails.
+  Future<bool> _saveEditedTripInfo(
     String name,
     String destination,
     String description,
@@ -3011,14 +3013,13 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
             backgroundColor: Colors.red,
           ),
         );
-        return;
+        return false;
       }
 
-      // Parse budget - remove commas first
+      // Parse budget. The field shows Vietnamese grouping ("5.000.000"), so dots are separators too.
       double? budget;
       if (budgetText.isNotEmpty) {
-        // Remove commas and any non-digit characters except decimal point
-        final cleanBudget = budgetText.replaceAll(',', '').replaceAll(' ', '');
+        final cleanBudget = budgetText.replaceAll(RegExp(r'[.,\s]'), '');
         budget = double.tryParse(cleanBudget);
         if (budget == null) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -3027,7 +3028,7 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
               backgroundColor: Colors.red,
             ),
           );
-          return;
+          return false;
         }
       }
 
@@ -3053,9 +3054,9 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
         updatedAt: DateTime.now(),
       );
 
-      // Save to storage
-      await _firebaseService.saveTrip(updatedTrip);
+      // Update the trip list and storage without waiting for Firestore to acknowledge
       final storedTrip = updatedTrip;
+      context.read<TripPlanningProvider>().updateTrip(storedTrip);
 
       // Try to update on server if trip has ID and not local
       if (storedTrip.id != null && !storedTrip.id!.startsWith('local_')) {
@@ -3066,12 +3067,22 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
         }
       }
 
+      if (!mounted) return false;
       setState(() {
         _trip = storedTrip;
         _hasChanges = true;
       });
+      return true;
     } catch (e) {
-      //
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update trip: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return false;
     }
   }
 
@@ -3081,8 +3092,18 @@ class _PlannerDetailScreenState extends State<PlannerDetailScreen> {
       activities: List<ActivityModel>.from(_activities),
     );
 
-    // Save to Firebase
-    await _firebaseService.saveTrip(updatedTrip);
+    // Save to Firebase without waiting for the server to acknowledge the write
+    _firebaseService.saveTrip(updatedTrip).catchError((e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not save changes: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return updatedTrip;
+    });
 
     // Check if this is a collaboration trip and update the provider accordingly
     try {

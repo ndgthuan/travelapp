@@ -533,7 +533,8 @@ class _CreatePlannerScreenState extends State<CreatePlannerScreen> {
 
       // Initialize an linked budget in the Expense module if an amount was provided
       if (budgetAmount != null && createdTrip != null) {
-        await _createExpenseBudget(createdTrip.id!, budgetAmount);
+        // Not awaited: the expense sync is a convenience and must not keep the screen on "Saving...".
+        _createExpenseBudget(createdTrip.id!, budgetAmount);
       }
 
       navigator.pop(); // close loading dialog
