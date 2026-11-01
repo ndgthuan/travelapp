@@ -1,5 +1,13 @@
 import 'activity_models.dart';
 
+/// Whether a trip that ends on [end_date] has ended as of [now].
+///
+/// A trip ends at the close of its end day, so a trip ending today is still in progress.
+bool has_trip_ended(DateTime end_date, {DateTime? now}) {
+  final day_after_end = DateTime(end_date.year, end_date.month, end_date.day + 1);
+  return !(now ?? DateTime.now()).isBefore(day_after_end);
+}
+
 /// Core Trip model for managing travel plans and itineraries.
 ///
 /// Stores high-level trip metadata, timing, and a collection of [ActivityModel]s.
@@ -71,7 +79,7 @@ class TripModel {
 
   /// Whether the trip has already ended.
   bool get isCompleted {
-    return DateTime.now().isAfter(endDate);
+    return has_trip_ended(endDate);
   }
 
   /// Aggregate of trip budget and all activity budgets.

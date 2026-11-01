@@ -688,12 +688,12 @@ async def create_trip(
                 detail="Trip destination is required"
             )
             
-        if trip_data.start_date >= trip_data.end_date:
+        if trip_data.start_date > trip_data.end_date:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="End date must be after start date"
+                detail="End date cannot be before start date"
             )
-        
+
         print(f"📝 TRIP_VALIDATION: All validations passed")
         
         # Ensure user record exists first

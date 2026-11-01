@@ -54,6 +54,16 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen>
     super.dispose();
   }
 
+  /// Rate text shown under the converter. Very small rates (1 VND ≈ 0.000039 USD) round to
+  /// 0.0000 at four decimals, so those show the inverse rate instead.
+  String _rate_label() {
+    if (_exchangeRate > 0 && _exchangeRate < 0.01) {
+      final inverse = 1 / _exchangeRate;
+      return '1 ${_toCurrency.code} = ${inverse.toStringAsFixed(0)} ${_fromCurrency.code}';
+    }
+    return '1 ${_fromCurrency.code} = ${_exchangeRate.toStringAsFixed(4)} ${_toCurrency.code}';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -493,7 +503,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen>
           if (_exchangeRate > 0) ...[
             const SizedBox(height: 8),
             Text(
-              '1 ${_fromCurrency.code} = ${_exchangeRate.toStringAsFixed(4)} ${_toCurrency.code}',
+              _rate_label(),
               style: TextStyle(
                 fontFamily: 'Urbanist-Regular',
                 fontSize: 12,
@@ -551,7 +561,7 @@ class _CurrencyConverterScreenState extends State<CurrencyConverterScreen>
                 ),
               ),
               Text(
-                '1 ${_fromCurrency.code} = ${_exchangeRate.toStringAsFixed(4)} ${_toCurrency.code}',
+                _rate_label(),
                 style: TextStyle(
                   fontFamily: 'Urbanist-Regular',
                   fontSize: 13,

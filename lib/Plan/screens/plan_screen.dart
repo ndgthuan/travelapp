@@ -548,7 +548,7 @@ class _PlanScreenState extends State<PlanScreen>
     final now = DateTime.now();
     if (trip.startDate.isAfter(now)) {
       status = 'Upcoming';
-    } else if (trip.endDate.isBefore(now)) {
+    } else if (has_trip_ended(trip.endDate, now: now)) {
       status = 'Completed';
     } else {
       status = 'In Progress';
@@ -842,7 +842,7 @@ class _PlanScreenState extends State<PlanScreen>
     final now = DateTime.now();
     if (trip.startDate.isAfter(now)) {
       status = 'Upcoming';
-    } else if (trip.endDate.isBefore(now)) {
+    } else if (has_trip_ended(trip.endDate, now: now)) {
       status = 'Completed';
     } else {
       status = 'In Progress';
